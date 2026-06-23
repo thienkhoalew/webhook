@@ -7,6 +7,7 @@ import { WebhookSubscription } from "./entities/webhook-subscription.entity.js";
 import { WebhookEvent } from "./entities/webhook-event.entity.js";
 import { WebhookDeliveryAttempt } from "./entities/webhook-delivery-attempt.entity.js";
 import { UpdateWebhookDto } from "./dto/update-webhook.dto.js";
+import { WebhookDeliveryService } from "./webhook-delivery.service.js";
 
 @Injectable()
 export class WebhooksService {
@@ -21,10 +22,12 @@ export class WebhooksService {
         @InjectRepository(WebhookDeliveryAttempt)
         private readonly deliveryAttemptRepository: Repository<WebhookDeliveryAttempt>,
 
-        private readonly dataSource: DataSource,
-    ) {}
+        private readonly webhookDeliveryService: WebhookDeliveryService,
 
-    async createSubscription( dto: CreateWebhookDto ) {
+        private readonly dataSource: DataSource,
+    ) { }
+
+    async createSubscription(dto: CreateWebhookDto) {
         const webhook = this.subscriptionRepository.create({
             url: dto.url,
             eventTypes: dto.eventTypes,
@@ -36,7 +39,7 @@ export class WebhooksService {
         return this.subscriptionRepository.save(webhook);
     }
 
-    async createDeliveryAttemptsForEvent( event: WebhookEvent ) {
+    async createDeliveryAttemptsForEvent(event: WebhookEvent) {
         const subscriptions = await this.findActiveSubscriptionsForEvent(event.eventType);
 
         const attempts = subscriptions.map((subscription) =>
@@ -59,7 +62,7 @@ export class WebhooksService {
         });
     }
 
-    async findSubscriptionById( id: string ) {
+    async findSubscriptionById(id: string) {
         const webhook = await this.subscriptionRepository.findOne({ where: { id } });
 
         if (!webhook) {
@@ -68,7 +71,7 @@ export class WebhooksService {
         return webhook;
     }
 
-    async updateSubscription( id: string, dto: UpdateWebhookDto ) {
+    async updateSubscription(id: string, dto: UpdateWebhookDto) {
         if (Object.keys(dto).length === 0) {
             throw new BadRequestException('Update body must contain at least one field');
         }
@@ -78,13 +81,13 @@ export class WebhooksService {
         return this.subscriptionRepository.save(webhook);
     }
 
-    async removeSubscription( id: string ) {
+    async removeSubscription(id: string) {
         const webhook = await this.findSubscriptionById(id);
         await this.subscriptionRepository.remove(webhook);
         return webhook;
     }
 
-    async createEvent( eventType: string, payload: Record<string, unknown> ) {
+    async createEvent(eventType: string, payload: Record<string, unknown>) {
         const event = this.eventRepository.create({
             eventType,
             payload,
@@ -94,7 +97,7 @@ export class WebhooksService {
         return this.eventRepository.save(event);
     }
 
-    async findActiveSubscriptionsForEvent( eventType: string ) {
+    async findActiveSubscriptionsForEvent(eventType: string) {
         return this.subscriptionRepository.find({
             where: {
                 isActive: true,
@@ -107,7 +110,7 @@ export class WebhooksService {
         eventType: string,
         payload: Record<string, unknown>,
     ) {
-        return this.dataSource.transaction(async (manager) => {
+        const result = await this.dataSource.transaction(async (manager) => {
             const eventRepository = manager.getRepository(WebhookEvent);
             const deliveryAttemptRepository = manager.getRepository(WebhookDeliveryAttempt);
             const subscriptionRepository = manager.getRepository(WebhookSubscription);
@@ -140,8 +143,17 @@ export class WebhooksService {
 
             return {
                 event: savedEvent,
-                deliveryAttempts: savedAttempts
+                deliveryAttempts: savedAttempts,
             };
         });
+
+        const deliveredAttempts = await this.webhookDeliveryService.deliverAttempts(
+            result.deliveryAttempts,
+        );
+
+        return {
+            event: result.event,
+            deliveryAttempts: deliveredAttempts,
+        };
     }
 }

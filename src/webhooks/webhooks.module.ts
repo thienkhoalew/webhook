@@ -5,6 +5,7 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { WebhookSubscription } from "./entities/webhook-subscription.entity.js";
 import { WebhookDeliveryAttempt } from "./entities/webhook-delivery-attempt.entity.js";
 import { WebhookEvent } from "./entities/webhook-event.entity.js";
+import { WebhookDeliveryService } from "./webhook-delivery.service.js";
 
 @Module({
     imports: [
@@ -15,6 +16,6 @@ import { WebhookEvent } from "./entities/webhook-event.entity.js";
         ])
     ],
     controllers: [WebhooksController],
-    providers: [WebhooksService],
+    providers: [WebhooksService, WebhookDeliveryService],
 })
 export class WebhooksModule { }
