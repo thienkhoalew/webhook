@@ -4,13 +4,13 @@ import { AppService } from './app.service.js';
 import { WebhooksModule } from './webhooks/webhooks.module.js';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
@@ -21,10 +21,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
         password: configService.get<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE'),
         autoLoadEntities: true,
-        synchronize: true,
+        synchronize: false,
       })
     }),
-
+    ScheduleModule.forRoot(),
     WebhooksModule
   ],
   controllers: [AppController],

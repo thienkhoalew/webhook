@@ -6,6 +6,7 @@ import { WebhookSubscription } from "./entities/webhook-subscription.entity.js";
 import { WebhookDeliveryAttempt } from "./entities/webhook-delivery-attempt.entity.js";
 import { WebhookEvent } from "./entities/webhook-event.entity.js";
 import { WebhookDeliveryService } from "./webhook-delivery.service.js";
+import { WebhookRetryProcessor } from "./webhook-retry.processor.js";
 
 @Module({
     imports: [
@@ -16,6 +17,10 @@ import { WebhookDeliveryService } from "./webhook-delivery.service.js";
         ])
     ],
     controllers: [WebhooksController],
-    providers: [WebhooksService, WebhookDeliveryService],
+    providers: [
+        WebhooksService,
+        WebhookDeliveryService,
+        WebhookRetryProcessor,
+    ],
 })
 export class WebhooksModule { }

@@ -36,7 +36,8 @@ export class WebhooksService {
             isActive: true,
         });
 
-        return this.subscriptionRepository.save(webhook);
+        const savedWebhook = await this.subscriptionRepository.save(webhook);
+        return this.sanitizeSubscription(savedWebhook);
     }
 
     async createDeliveryAttemptsForEvent(event: WebhookEvent) {
@@ -55,20 +56,18 @@ export class WebhooksService {
     }
 
     async findAllSubscriptions() {
-        return this.subscriptionRepository.find({
+        const subscriptions = await this.subscriptionRepository.find({
             order: {
                 createdAt: "DESC",
             },
         });
+
+        return this.sanitizeSubscriptions(subscriptions);
     }
 
     async findSubscriptionById(id: string) {
-        const webhook = await this.subscriptionRepository.findOne({ where: { id } });
-
-        if (!webhook) {
-            throw new NotFoundException(`Webhook with id "${id}" not found`);
-        }
-        return webhook;
+        const webhook = await this.findSubscriptionEntityById(id);
+        return this.sanitizeSubscription(webhook);
     }
 
     async updateSubscription(id: string, dto: UpdateWebhookDto) {
@@ -76,15 +75,16 @@ export class WebhooksService {
             throw new BadRequestException('Update body must contain at least one field');
         }
 
-        const webhook = await this.findSubscriptionById(id);
+        const webhook = await this.findSubscriptionEntityById(id);
         Object.assign(webhook, dto, { updatedAt: new Date() });
-        return this.subscriptionRepository.save(webhook);
+        const savedWebhook = await this.subscriptionRepository.save(webhook);
+        return this.sanitizeSubscription(savedWebhook);
     }
 
     async removeSubscription(id: string) {
-        const webhook = await this.findSubscriptionById(id);
+        const webhook = await this.findSubscriptionEntityById(id);
         await this.subscriptionRepository.remove(webhook);
-        return webhook;
+        return this.sanitizeSubscription(webhook);
     }
 
     async createEvent(eventType: string, payload: Record<string, unknown>) {
@@ -147,13 +147,70 @@ export class WebhooksService {
             };
         });
 
-        const deliveredAttempts = await this.webhookDeliveryService.deliverAttempts(
-            result.deliveryAttempts,
-        );
+        if(result.deliveryAttempts.length === 0) {
+            await this.webhookDeliveryService.refreshEventStatus(result.event.id);
+        }
+
+        const deliveredAttempts = result.deliveryAttempts.length > 0
+            ? await this.webhookDeliveryService.deliverAttempts(result.deliveryAttempts)
+            : [];
+
+        const updatedEvent = await this.eventRepository.findOne({
+            where: { id: result.event.id },
+        });
 
         return {
-            event: result.event,
-            deliveryAttempts: deliveredAttempts,
+            event: updatedEvent ?? result.event,
+            deliveryAttempts: this.sanitizeDeliveryAttempts(deliveredAttempts),
         };
+    }
+
+    private sanitizeSubscription(subscription: WebhookSubscription) {
+        const { secret, ...safeSubscription } = subscription;
+        return safeSubscription;
+    }
+
+    private sanitizeDeliveryAttempt(attempt: WebhookDeliveryAttempt | null) {
+        if(!attempt) {
+            return null;
+        }
+
+        return {
+            id: attempt.id,
+            subscriptionId: attempt.subscriptionId,
+            eventId: attempt.eventId,
+            status: attempt.status,
+            attemptNumber: attempt.attemptNumber,
+            httpStatusCode: attempt.httpStatusCode,
+            responseBody: attempt.responseBody,
+            errorMessage: attempt.errorMessage,
+            nextRetryAt: attempt.nextRetryAt,
+            deliveredAt: attempt.deliveredAt,
+            createdAt: attempt.createdAt,
+            updatedAt: attempt.updatedAt,
+            subscription: attempt.subscription
+                ? this.sanitizeSubscription(attempt.subscription)
+                : undefined,
+        };
+    }
+
+    private sanitizeDeliveryAttempts(attempts: (WebhookDeliveryAttempt | null)[]) {
+        return attempts.map((attempt) => this.sanitizeDeliveryAttempt(attempt));
+    }
+
+    private sanitizeSubscriptions(subscriptions: WebhookSubscription[]) {
+        return subscriptions.map(subscription => this.sanitizeSubscription(subscription));
+    }
+
+    private async findSubscriptionEntityById(id: string): Promise<WebhookSubscription> {
+        const webhook = await this.subscriptionRepository.findOne({
+            where: { id },
+        });
+        
+        if (!webhook) {
+            throw new NotFoundException(`Webhook with id "${id}" not found`);
+        }
+
+        return webhook;
     }
 }
