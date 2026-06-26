@@ -1,5 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsUrl, IsArray, IsOptional, ArrayMinSize, IsNotEmpty, MaxLength } from 'class-validator';
+import { 
+    IsString,
+    IsUrl,
+    IsArray,
+    IsOptional,
+    ArrayMinSize,
+    IsNotEmpty,
+    MaxLength,
+    MinLength 
+} from 'class-validator';
 
 export class CreateWebhookDto {
     @ApiProperty({
@@ -31,9 +40,10 @@ export class CreateWebhookDto {
     url!: string;
 
     @ApiPropertyOptional({
-        example: 'whsec_abc123',
+        example: 'whsec_1234567890abcdef',
         description: 'Secret to sign webhooks. If not provided, server will generate one',
     })
+    @MinLength(16)
     @IsOptional()
     @IsString()
     secret?: string;

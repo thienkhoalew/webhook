@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { CreateWebhookDto } from "./dto/create-webhook.dto.js";
-import { randomUUID } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import { InjectRepository } from "@nestjs/typeorm";
 import { ArrayContains, DataSource, Repository } from "typeorm";
 import { WebhookSubscription } from "./entities/webhook-subscription.entity.js";
@@ -8,6 +8,8 @@ import { WebhookEvent } from "./entities/webhook-event.entity.js";
 import { WebhookDeliveryAttempt } from "./entities/webhook-delivery-attempt.entity.js";
 import { UpdateWebhookDto } from "./dto/update-webhook.dto.js";
 import { WebhookDeliveryService } from "./webhook-delivery.service.js";
+import { WebhookDeliveryStatus, WebhookEventStatus } from "./enums/webhook-status.enum.js";
+import { ListWebhookEventsDto } from "./dto/list-webhook-events.dto.js";
 
 @Injectable()
 export class WebhooksService {
@@ -32,12 +34,12 @@ export class WebhooksService {
             url: dto.url,
             eventTypes: dto.eventTypes,
             description: dto.description ?? null,
-            secret: dto.secret ?? randomUUID(),
+            secret: dto.secret ?? this.generateWebhookSecret(),
             isActive: true,
         });
 
         const savedWebhook = await this.subscriptionRepository.save(webhook);
-        return this.sanitizeSubscription(savedWebhook);
+        return this.sanitizeCreatedSubscription(savedWebhook);
     }
 
     async createDeliveryAttemptsForEvent(event: WebhookEvent) {
@@ -47,7 +49,7 @@ export class WebhooksService {
             this.deliveryAttemptRepository.create({
                 eventId: event.id,
                 subscriptionId: subscription.id,
-                status: 'pending',
+                status: WebhookDeliveryStatus.Pending,
                 attemptNumber: 1,
             }),
         );
@@ -91,10 +93,42 @@ export class WebhooksService {
         const event = this.eventRepository.create({
             eventType,
             payload,
-            status: 'pending',
+            status: WebhookEventStatus.Pending,
         });
 
         return this.eventRepository.save(event);
+    }
+
+    async findEvents(query: ListWebhookEventsDto) {
+        const page = query.page ?? 1;
+        const limit = query.limit ?? 20;
+        const skip = (page - 1) * limit;
+
+        const queryBuilder = this.eventRepository
+            .createQueryBuilder('event')
+            .orderBy('event.createdAt', 'DESC')
+            .skip(skip)
+            .take(limit);
+
+        if (query.status) {
+            queryBuilder.andWhere('event.status = :status', { status: query.status });
+        }
+
+        if (query.eventType) {
+            queryBuilder.andWhere('event.eventType = :eventType', { eventType: query.eventType });
+        }
+
+        const [items, total] = await queryBuilder.getManyAndCount();
+
+        return {
+            items,
+            meta: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            },
+        };
     }
 
     async findActiveSubscriptionsForEvent(eventType: string) {
@@ -118,7 +152,7 @@ export class WebhooksService {
             const event = eventRepository.create({
                 eventType,
                 payload,
-                status: 'pending',
+                status: WebhookEventStatus.Pending,
             });
 
             const savedEvent = await eventRepository.save(event);
@@ -134,7 +168,7 @@ export class WebhooksService {
                 deliveryAttemptRepository.create({
                     eventId: savedEvent.id,
                     subscriptionId: subscription.id,
-                    status: 'pending',
+                    status: WebhookDeliveryStatus.Pending,
                     attemptNumber: 1,
                 }),
             );
@@ -147,7 +181,7 @@ export class WebhooksService {
             };
         });
 
-        if(result.deliveryAttempts.length === 0) {
+        if (result.deliveryAttempts.length === 0) {
             await this.webhookDeliveryService.refreshEventStatus(result.event.id);
         }
 
@@ -170,8 +204,15 @@ export class WebhooksService {
         return safeSubscription;
     }
 
+    private sanitizeCreatedSubscription(subscription: WebhookSubscription) {
+        return {
+            ...this.sanitizeSubscription(subscription),
+            secret: subscription.secret,
+        };
+    }
+
     private sanitizeDeliveryAttempt(attempt: WebhookDeliveryAttempt | null) {
-        if(!attempt) {
+        if (!attempt) {
             return null;
         }
 
@@ -206,11 +247,15 @@ export class WebhooksService {
         const webhook = await this.subscriptionRepository.findOne({
             where: { id },
         });
-        
+
         if (!webhook) {
             throw new NotFoundException(`Webhook with id "${id}" not found`);
         }
 
         return webhook;
+    }
+
+    private generateWebhookSecret(): string {
+        return `whsec_${randomBytes(32).toString('hex')}`;
     }
 }

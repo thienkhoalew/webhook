@@ -5,6 +5,8 @@ import { Repository } from 'typeorm';
 
 import { WebhookDeliveryAttempt } from './entities/webhook-delivery-attempt.entity.js';
 import { WebhookEvent } from './entities/webhook-event.entity.js';
+import { WebhookDeliveryStatus, WebhookEventStatus } from './enums/webhook-status.enum.js';
+import { ListDeliveryAttemptsDto } from './dto/list-delivery-attempts.dto.js';
 
 @Injectable()
 export class WebhookDeliveryService {
@@ -14,7 +16,7 @@ export class WebhookDeliveryService {
 
         @InjectRepository(WebhookEvent)
         private readonly eventRepository: Repository<WebhookEvent>,
-    ) {}
+    ) { }
 
     private createSignature(body: string, secret: string): string {
         return createHmac('sha256', secret)
@@ -80,14 +82,14 @@ export class WebhookDeliveryService {
             attempt.responseBody = responseBody.slice(0, 5000);
 
             if (response.ok) {
-                attempt.status = 'success';
+                attempt.status = WebhookDeliveryStatus.Success;
                 attempt.errorMessage = null;
                 attempt.deliveredAt = new Date();
                 attempt.nextRetryAt = null;
             } else {
                 const nextRetryAt = this.getNextRetryAt(attempt.attemptNumber);
 
-                attempt.status = nextRetryAt ? 'retrying' : 'failed';
+                attempt.status = nextRetryAt ? WebhookDeliveryStatus.Retrying : WebhookDeliveryStatus.Failed;
                 attempt.errorMessage = `Webhook endpoint returned HTTP ${response.status}`;
                 attempt.deliveredAt = null;
                 attempt.nextRetryAt = nextRetryAt;
@@ -100,7 +102,7 @@ export class WebhookDeliveryService {
         } catch (error) {
             const nextRetryAt = this.getNextRetryAt(attempt.attemptNumber);
 
-            attempt.status = nextRetryAt ? 'retrying' : 'failed';
+            attempt.status = nextRetryAt ? WebhookDeliveryStatus.Retrying : WebhookDeliveryStatus.Failed;
             attempt.errorMessage = error instanceof Error
                 ? error.message
                 : 'Unknown delivery error';
@@ -115,10 +117,45 @@ export class WebhookDeliveryService {
         }
     }
 
+    async findDeliveryAttempts(query: ListDeliveryAttemptsDto) {
+        const page = query.page ?? 1;
+        const limit = query.limit ?? 20;
+        const skip = (page - 1) * limit;
+        const queryBuilder = this.deliveryAttemptRepository
+            .createQueryBuilder('attempt')
+            .orderBy('attempt.createdAt', 'DESC')
+            .skip(skip)
+            .take(limit);
+
+        if (query.eventId) {
+            queryBuilder.andWhere('attempt.eventId = :eventId', { eventId: query.eventId });
+        }
+
+        if (query.subscriptionId) {
+            queryBuilder.andWhere('attempt.subscriptionId = :subscriptionId', { subscriptionId: query.subscriptionId });
+        }
+
+        if (query.status) {
+            queryBuilder.andWhere('attempt.status = :status', { status: query.status });
+        }
+
+        const [items, total] = await queryBuilder.getManyAndCount();
+
+        return {
+            items,
+            meta: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            },
+        };
+    }
+
     async findDueRetryAttempts(limit = 100): Promise<WebhookDeliveryAttempt[]> {
         return this.deliveryAttemptRepository
             .createQueryBuilder('attempt')
-            .where('attempt.status = :status', { status: 'retrying' })
+            .where('attempt.status = :status', { status: WebhookDeliveryStatus.Retrying })
             .andWhere('attempt.nextRetryAt <= :now', { now: new Date() })
             .orderBy('attempt.nextRetryAt', 'ASC')
             .limit(limit)
@@ -135,7 +172,7 @@ export class WebhookDeliveryService {
         }
 
         attempt.attemptNumber += 1;
-        attempt.status = 'pending';
+        attempt.status = WebhookDeliveryStatus.Pending;
         attempt.nextRetryAt = null;
 
         await this.deliveryAttemptRepository.save(attempt);
@@ -149,24 +186,27 @@ export class WebhookDeliveryService {
 
     private async updateEventStatus(eventId: string): Promise<void> {
         const attempts = await this.deliveryAttemptRepository.find({
-            where: { eventId},
+            where: { eventId },
         });
 
-        let status = 'no_subscribers';
+        let status: WebhookEventStatus = WebhookEventStatus.NoSubscribers;
 
-        if(attempts.length > 0) {
-            const hasPendingOrRetrying = attempts.some((attempt) => 
-                ['pending', 'retrying'].includes(attempt.status),
+        if (attempts.length > 0) {
+            const hasPendingOrRetrying = attempts.some((attempt) =>
+                [
+                    WebhookDeliveryStatus.Pending,
+                    WebhookDeliveryStatus.Retrying
+                ].includes(attempt.status),
             );
 
-            const allSuccess = attempts.every((attempt) => attempt.status === 'success');
+            const allSuccess = attempts.every((attempt) => attempt.status === WebhookDeliveryStatus.Success);
 
-            if(allSuccess) {
-                status = 'delivered';
-            } else if(hasPendingOrRetrying){
-                status = 'processing';
+            if (allSuccess) {
+                status = WebhookEventStatus.Delivered;
+            } else if (hasPendingOrRetrying) {
+                status = WebhookEventStatus.Processing;
             } else {
-                status = 'failed';
+                status = WebhookEventStatus.Failed;
             }
         }
 

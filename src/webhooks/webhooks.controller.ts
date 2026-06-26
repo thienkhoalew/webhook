@@ -1,14 +1,20 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from "@nestjs/common";
 import { ApiBody, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiParam, ApiTags } from "@nestjs/swagger";
 import { CreateWebhookDto } from "./dto/create-webhook.dto.js";
 import { CreateWebhookEventDto } from "./dto/create-webhook-event.dto.js";
 import { WebhooksService } from "./webhooks.service.js";
 import { UpdateWebhookDto } from "./dto/update-webhook.dto.js";
+import { ListWebhookEventsDto } from "./dto/list-webhook-events.dto.js";
+import { ListDeliveryAttemptsDto } from "./dto/list-delivery-attempts.dto.js";
+import { WebhookDeliveryService } from "./webhook-delivery.service.js";
 
 @ApiTags('webhooks')
 @Controller('webhooks')
 export class WebhooksController {
-    constructor(private readonly webhooksService: WebhooksService) {}
+    constructor(
+        private readonly webhooksService: WebhooksService,
+        private readonly webhookDeliveryService: WebhookDeliveryService,
+    ) { }
 
     @ApiOperation({ summary: 'Create a new webhook subscription' })
     @ApiBody({ type: CreateWebhookDto })
@@ -36,6 +42,19 @@ export class WebhooksController {
             dto.eventType,
             dto.payload,
         );
+    }
+
+    @Get('events')
+    @ApiOperation({ summary: 'List webhook events' })
+    async findEvents(@Query() query: ListWebhookEventsDto) {
+        return this.webhooksService.findEvents(query);
+    }
+
+    @Get('delivery-attempts')
+    @ApiOperation({ summary: 'List webhook delivery attempts' })
+    @ApiOkResponse({ description: 'Webhook delivery attempts listed successfully' })
+    async findDeliveryAttempts(@Query() query: ListDeliveryAttemptsDto) {
+        return this.webhookDeliveryService.findDeliveryAttempts(query);
     }
 
     @ApiOperation({ summary: 'Get webhook subscription by id' })

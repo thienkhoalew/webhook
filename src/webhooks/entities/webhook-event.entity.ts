@@ -7,6 +7,7 @@ import {
     UpdateDateColumn
 } from "typeorm";
 import { WebhookDeliveryAttempt } from "./webhook-delivery-attempt.entity.js";
+import { WebhookEventStatus } from "../enums/webhook-status.enum.js";
 
 @Entity('webhook_events')
 export class WebhookEvent {
@@ -19,8 +20,8 @@ export class WebhookEvent {
     @Column({ type: 'jsonb' })
     payload!: Record<string, unknown>;
 
-    @Column({ type: 'varchar', length: 50, default: 'pending' })
-    status!: string;
+    @Column({ type: 'varchar', length: 50, default: WebhookEventStatus.Pending })
+    status!: WebhookEventStatus;
 
     @OneToMany(
         () => WebhookDeliveryAttempt,
