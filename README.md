@@ -1,98 +1,137 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Webhook Manager Microservices
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestJS monorepo gồm hai ứng dụng độc lập. API sở hữu auth, users, subscriptions và events. Delivery service sở hữu attempts, HMAC delivery và retry.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Ranh giới
 
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ npm install
+```text
+Client -> api-service:3000 -> webhook_api_db
+                         -> Redis/BullMQ
+Redis/BullMQ -> delivery-service:3001 -> webhook_delivery_db
+                                      -> target webhook endpoint
+api-service -> internal HTTP -> delivery-service
 ```
 
-## Compile and run the project
+Chỉ [contracts](libs/contracts/src/) được chia sẻ. Hai application không import entity, provider hoặc implementation của nhau.
 
-```bash
-# development
-$ npm run start
+Delivery semantics: at-least-once. `attemptId` dùng làm idempotency key DB và header `X-Webhook-Attempt-Id`. Target có thể nhận request trùng nếu worker crash sau HTTP success nhưng trước DB commit.
 
-# watch mode
-$ npm run start:dev
+Event save và Redis enqueue chưa dùng transactional outbox. Nếu Redis lỗi sau DB commit, request tạo event trả lỗi; client retry tạo event mới. Production cần thêm API outbox publisher để đóng khoảng trống này.
 
-# production mode
-$ npm run start:prod
+## Cấu trúc
+
+```text
+apps/api-service
+apps/delivery-service
+libs/contracts
 ```
 
-## Run tests
+## Cài đặt
+
+### Chạy toàn bộ stack bằng Docker Compose
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+cp .env.example .env
+docker compose up --build -d
+docker compose ps
 ```
 
-## Deployment
+Hai application tự chạy migrations khi khởi động. Stack sẵn sàng khi PostgreSQL, Redis và `delivery-service` báo `healthy`, còn `api-service` báo `Up`.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Development database cũ không tương thích schema mới. Nếu không cần giữ dữ liệu local:
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+docker compose down --volumes --remove-orphans
+docker compose up --build -d
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Lệnh trên xóa toàn bộ API DB, delivery DB và Redis data local. Không chạy nếu cần giữ dữ liệu.
 
-## Resources
+### Chạy application trên host
 
-Check out a few resources that may come in handy when working with NestJS:
+```bash
+npm install
+cp .env.example .env
+docker compose up -d postgres-api postgres-delivery redis
+npm run migration:run
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+Chạy mỗi service trong terminal riêng:
 
-## Support
+```bash
+npm run start:api:dev
+npm run start:delivery:dev
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## Endpoints
 
-## Stay in touch
+- API health: `http://localhost:3000/health`
+- Public API: `http://localhost:3000`
+- Swagger: `http://localhost:3000/api/docs`
+- Delivery health: `http://localhost:3001/health`
+- Internal delivery routes yêu cầu `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+Kiểm tra health:
 
-## License
+```bash
+curl -i http://localhost:3000/health
+curl -i http://localhost:3001/health
+```
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Mỗi endpoint phải trả `HTTP/1.1 200 OK` và JSON chứa `"status":"ok"`.
+
+## Xác minh database ownership
+
+```bash
+docker compose exec -T postgres-api \
+  psql -U webhook_api_user -d webhook_api_db \
+  -c '\dt'
+
+docker compose exec -T postgres-delivery \
+  psql -U webhook_delivery_user -d webhook_delivery_db \
+  -c '\dt'
+```
+
+API DB phải chỉ có bảng domain `users`, `webhook_events`, `webhook_subscriptions`. Delivery DB phải chỉ có bảng domain `webhook_delivery_attempts`. Mỗi DB có thêm bảng metadata `migrations`.
+
+## Build và test
+
+```bash
+npm run build:api
+npm run build:delivery
+npm test
+npm run test:e2e
+```
+
+## Docker Compose
+
+Compose chạy `postgres-api`, `postgres-delivery`, `redis`, `api-service`, `delivery-service`.
+
+Xem trạng thái và logs:
+
+```bash
+docker compose ps
+docker compose logs --no-color api-service delivery-service
+```
+
+Production phải đặt secret mạnh, bật Redis auth/TLS, bỏ publish port `3001` ra host và chỉ cho API service truy cập delivery service qua private network.
+
+## Migrations
+
+```bash
+npm run migration:run:api
+npm run migration:run:delivery
+npm run migration:show:api
+npm run migration:show:delivery
+```
+
+API DB chứa `users`, `webhook_subscriptions`, `webhook_events`. Delivery DB chỉ chứa `webhook_delivery_attempts`; IDs API là external references, không có foreign key cross-database.
+
+## Di chuyển dữ liệu development cũ
+
+Migration tự động từ DB đơn sang hai DB không chạy mặc định vì cần hai connection và snapshot secret/url tại thời điểm attempt cũ. Chọn một:
+
+1. Không cần sample data: dừng stack, xóa volumes local, tạo schema mới.
+2. Cần giữ data: export users/subscriptions/events vào API DB; join attempts với event/subscription ở DB cũ; import snapshot vào delivery DB. Kiểm tra count/status trước khi xóa DB cũ.
+
+Không log BullMQ command. Command chứa URL, payload và secret snapshot.
