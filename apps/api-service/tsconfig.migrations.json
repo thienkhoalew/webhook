@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "../../dist/apps/api-service",
+    "declaration": false,
+    "incremental": false
+  },
+  "include": [
+    "src/database/data-source.ts",
+    "src/database/migrations/**/*.ts"
+  ],
+  "exclude": ["**/*.spec.ts"]
+}
