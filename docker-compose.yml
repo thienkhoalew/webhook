@@ -1,16 +1,107 @@
-services: 
-  postgres:
+services:
+  postgres-api:
     image: postgres:16-alpine
-    container_name: webhook-postgres
     restart: unless-stopped
-    environment: 
-      POSTGRES_USER: webhook_user
-      POSTGRES_PASSWORD: webhook_password
-      POSTGRES_DB: webhook_db
-    ports: 
+    environment:
+      POSTGRES_USER: ${API_DB_USERNAME:-webhook_api_user}
+      POSTGRES_PASSWORD: ${API_DB_PASSWORD:-webhook_api_password}
+      POSTGRES_DB: ${API_DB_DATABASE:-webhook_api_db}
+    ports:
       - "5432:5432"
     volumes:
-      - webhook_postgres_data:/var/lib/postgresql/data
-  
+      - webhook_api_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${API_DB_USERNAME:-webhook_api_user} -d ${API_DB_DATABASE:-webhook_api_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres-delivery:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DELIVERY_DB_USERNAME:-webhook_delivery_user}
+      POSTGRES_PASSWORD: ${DELIVERY_DB_PASSWORD:-webhook_delivery_password}
+      POSTGRES_DB: ${DELIVERY_DB_DATABASE:-webhook_delivery_db}
+    ports:
+      - "5433:5432"
+    volumes:
+      - webhook_delivery_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DELIVERY_DB_USERNAME:-webhook_delivery_user} -d ${DELIVERY_DB_DATABASE:-webhook_delivery_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - webhook_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api-service:
+    build:
+      context: .
+      dockerfile: apps/api-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      API_PORT: 3000
+      API_DB_HOST: postgres-api
+      API_DB_PORT: 5432
+      API_DB_USERNAME: ${API_DB_USERNAME:-webhook_api_user}
+      API_DB_PASSWORD: ${API_DB_PASSWORD:-webhook_api_password}
+      API_DB_DATABASE: ${API_DB_DATABASE:-webhook_api_db}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DELIVERY_SERVICE_URL: http://delivery-service:3001
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-token-change-me}
+      JWT_SECRET: ${JWT_SECRET:-local-jwt-secret-change-me}
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      delivery-service:
+        condition: service_healthy
+
+  delivery-service:
+    build:
+      context: .
+      dockerfile: apps/delivery-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      DELIVERY_PORT: 3001
+      DELIVERY_DB_HOST: postgres-delivery
+      DELIVERY_DB_PORT: 5432
+      DELIVERY_DB_USERNAME: ${DELIVERY_DB_USERNAME:-webhook_delivery_user}
+      DELIVERY_DB_PASSWORD: ${DELIVERY_DB_PASSWORD:-webhook_delivery_password}
+      DELIVERY_DB_DATABASE: ${DELIVERY_DB_DATABASE:-webhook_delivery_db}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-token-change-me}
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres-delivery:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
 volumes:
-  webhook_postgres_data:
+  webhook_api_data:
+  webhook_delivery_data:
+  webhook_redis_data:
