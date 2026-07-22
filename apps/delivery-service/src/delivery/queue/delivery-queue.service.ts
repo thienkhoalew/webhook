@@ -11,6 +11,7 @@ import {
 
 export interface RetryWebhookJob {
   attemptId: string;
+  attemptNumber: number;
 }
 
 type DeliveryQueueJob = DeliverWebhookV1 | RetryWebhookJob;
@@ -30,11 +31,14 @@ export class DeliveryQueueService {
     });
   }
 
-  enqueueRetry(attemptId: string) {
+  enqueueRetry(attemptId: string, attemptNumber: number) {
     return this.queue.add(
       RETRY_WEBHOOK_JOB,
-      { attemptId },
+      { attemptId, attemptNumber },
       {
+        jobId: `retry-${attemptId}-${attemptNumber}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1000 },
         removeOnComplete: true,
         removeOnFail: true,
       },

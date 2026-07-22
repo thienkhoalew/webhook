@@ -1,6 +1,7 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AppController } from './app.controller.js';
@@ -19,8 +20,7 @@ import { WebhooksModule } from './webhooks/webhooks.module.js';
         type: 'postgres',
         host: config.get<string>('API_DB_HOST') ?? 'localhost',
         port: config.get<number>('API_DB_PORT') ?? 5432,
-        username:
-          config.get<string>('API_DB_USERNAME') ?? 'webhook_api_user',
+        username: config.get<string>('API_DB_USERNAME') ?? 'webhook_api_user',
         password:
           config.get<string>('API_DB_PASSWORD') ?? 'webhook_api_password',
         database: config.get<string>('API_DB_DATABASE') ?? 'webhook_api_db',
@@ -39,6 +39,7 @@ import { WebhooksModule } from './webhooks/webhooks.module.js';
         },
       }),
     }),
+    ScheduleModule.forRoot(),
     DeliveryClientModule,
     WebhooksModule,
     UsersModule,

@@ -34,6 +34,9 @@ export class WebhookEvent {
   @Column({ type: 'varchar', length: 50, default: WebhookEventStatus.Pending })
   status!: WebhookEventStatus;
 
+  @Column({ name: 'expected_delivery_count', type: 'int', nullable: true })
+  expectedDeliveryCount!: number | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 

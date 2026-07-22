@@ -113,8 +113,10 @@ export class WebhooksController {
   @ApiOperation({ summary: 'Queue a webhook delivery attempt retry' })
   @ApiParam({ name: 'id', description: 'Webhook delivery attempt UUID' })
   @ApiOkResponse({ type: WebhookDeliveryAttemptResponseDto })
-  retryDeliveryAttempt(@Param('id', ParseUUIDPipe) id: string) {
-    return this.deliveryClient.retryAttempt(id);
+  async retryDeliveryAttempt(@Param('id', ParseUUIDPipe) id: string) {
+    const attempt = await this.deliveryClient.retryAttempt(id);
+    await this.webhooks.markEventProcessing(attempt.eventId);
+    return attempt;
   }
 
   @Get(':id')

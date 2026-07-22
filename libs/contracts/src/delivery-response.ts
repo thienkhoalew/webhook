@@ -41,3 +41,16 @@ export interface DeliveryAttemptQuery {
   page?: number;
   limit?: number;
 }
+
+export interface DeliveryEventSummary {
+  eventId: string;
+  total: number;
+  pending: number;
+  retrying: number;
+  success: number;
+  failed: number;
+}
+
+export interface DeliveryEventSummaryResponse {
+  items: DeliveryEventSummary[];
+}

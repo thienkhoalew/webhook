@@ -1,27 +1,29 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHmac } from 'node:crypto';
-import { LessThanOrEqual, Repository } from 'typeorm';
+import { In, LessThanOrEqual, MoreThan, Repository } from 'typeorm';
 
 import type {
   DeliverWebhookV1,
   DeliveryAttemptResponse,
+  DeliveryEventSummaryResponse,
   PaginatedDeliveryAttemptsResponse,
 } from '@webhook/contracts';
 import { DeliveryAttempt } from './entities/delivery-attempt.entity.js';
 import { InternalListDeliveryAttemptsDto } from './dto/internal-list-delivery-attempts.dto.js';
 import { getNextRetryAt } from './retry-policy.js';
+import { SafeWebhookHttpClient } from './safe-webhook-http.client.js';
 
 @Injectable()
 export class DeliveryAttemptService {
   constructor(
     @InjectRepository(DeliveryAttempt)
     private readonly repository: Repository<DeliveryAttempt>,
+    private readonly http: SafeWebhookHttpClient,
   ) {}
 
   async upsertFromCommand(command: DeliverWebhookV1): Promise<DeliveryAttempt> {
@@ -62,29 +64,26 @@ export class DeliveryAttemptService {
       payload: attempt.payloadSnapshot,
       createdAt: attempt.eventCreatedAt.toISOString(),
     });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
     try {
       const signature = createHmac('sha256', attempt.secretSnapshot)
         .update(body)
         .digest('hex');
-      const response = await fetch(attempt.targetUrl, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
+      const response = await this.http.post(
+        attempt.targetUrl,
+        {
           'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
           'X-Webhook-Event': attempt.eventType,
           'X-Webhook-Event-Id': attempt.eventId,
           'X-Webhook-Attempt-Id': attempt.id,
           'X-Webhook-Signature': signature,
         },
         body,
-      });
+      );
 
-      attempt.httpStatusCode = response.status;
-      attempt.responseBody = (await response.text()).slice(0, 5000);
-      if (response.ok) {
+      attempt.httpStatusCode = response.statusCode;
+      attempt.responseBody = response.body;
+      if (response.statusCode >= 200 && response.statusCode < 300) {
         attempt.status = 'success';
         attempt.errorMessage = null;
         attempt.deliveredAt = new Date();
@@ -92,7 +91,7 @@ export class DeliveryAttemptService {
       } else {
         this.markFailedAttempt(
           attempt,
-          `Webhook endpoint returned HTTP ${response.status}`,
+          `Webhook endpoint returned HTTP ${response.statusCode}`,
         );
       }
     } catch (error) {
@@ -100,8 +99,6 @@ export class DeliveryAttemptService {
         attempt,
         error instanceof Error ? error.message : 'Unknown delivery error',
       );
-    } finally {
-      clearTimeout(timeout);
     }
 
     return this.toResponse(await this.repository.save(attempt));
@@ -151,42 +148,95 @@ export class DeliveryAttemptService {
     };
   }
 
-  async prepareRetry(attemptId: string): Promise<DeliveryAttemptResponse> {
+  async assertRetryable(attemptId: string): Promise<DeliveryAttemptResponse> {
     const attempt = await this.getEntity(attemptId);
-    if (attempt.status === 'success') {
-      throw new BadRequestException(`Attempt ${attemptId} is already successful`);
-    }
     if (!['failed', 'retrying'].includes(attempt.status)) {
       throw new BadRequestException(`Attempt ${attemptId} is not retryable`);
     }
+    return this.toResponse(attempt);
+  }
 
+  async claimRetry(
+    attemptId: string,
+    expectedAttemptNumber: number,
+  ): Promise<boolean> {
     const result = await this.repository
       .createQueryBuilder()
       .update(DeliveryAttempt)
       .set({
-        attemptNumber: () => '"attempt_number" + 1',
+        attemptNumber: expectedAttemptNumber,
         status: 'pending',
         nextRetryAt: null,
       })
       .where('id = :attemptId', { attemptId })
+      .andWhere('attempt_number = :previousAttemptNumber', {
+        previousAttemptNumber: expectedAttemptNumber - 1,
+      })
       .andWhere('status IN (:...statuses)', {
         statuses: ['failed', 'retrying'],
       })
       .execute();
-    if (!result.affected) {
-      throw new ConflictException(`Attempt ${attemptId} retry already claimed`);
-    }
+    if (result.affected) return true;
 
-    return this.toResponse(await this.getEntity(attemptId));
+    const attempt = await this.getEntity(attemptId);
+    return (
+      attempt.status === 'pending' &&
+      attempt.attemptNumber === expectedAttemptNumber
+    );
+  }
+
+  async summarizeEvents(
+    eventIds: string[],
+  ): Promise<DeliveryEventSummaryResponse> {
+    const rows = await this.repository
+      .createQueryBuilder('attempt')
+      .select('attempt.eventId', 'eventId')
+      .addSelect('COUNT(*)', 'total')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE attempt.status = 'pending')`,
+        'pending',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE attempt.status = 'retrying')`,
+        'retrying',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE attempt.status = 'success')`,
+        'success',
+      )
+      .addSelect(`COUNT(*) FILTER (WHERE attempt.status = 'failed')`, 'failed')
+      .where({ eventId: In(eventIds) })
+      .groupBy('attempt.eventId')
+      .getRawMany<Record<string, string>>();
+
+    return {
+      items: rows.map((row) => ({
+        eventId: row.eventId,
+        total: Number(row.total),
+        pending: Number(row.pending),
+        retrying: Number(row.retrying),
+        success: Number(row.success),
+        failed: Number(row.failed),
+      })),
+    };
   }
 
   findDueRetries(limit = 100): Promise<DeliveryAttempt[]> {
+    const now = new Date();
+    const stalePending = new Date(now.getTime() - 60_000);
     return this.repository.find({
-      where: {
-        status: 'retrying',
-        nextRetryAt: LessThanOrEqual(new Date()),
-      },
-      order: { nextRetryAt: 'ASC' },
+      where: [
+        {
+          status: 'retrying',
+          nextRetryAt: LessThanOrEqual(now),
+        },
+        {
+          status: 'pending',
+          attemptNumber: MoreThan(1),
+          updatedAt: LessThanOrEqual(stalePending),
+        },
+      ],
+      order: { updatedAt: 'ASC' },
       take: limit,
     });
   }

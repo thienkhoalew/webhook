@@ -10,6 +10,7 @@ import { InternalServiceTokenGuard } from './internal-service-token.guard.js';
 import { DeliveryProcessor } from './queue/delivery.processor.js';
 import { DeliveryQueueService } from './queue/delivery-queue.service.js';
 import { RetrySchedulerService } from './retry-scheduler.service.js';
+import { SafeWebhookHttpClient } from './safe-webhook-http.client.js';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { RetrySchedulerService } from './retry-scheduler.service.js';
     DeliveryQueueService,
     DeliveryProcessor,
     RetrySchedulerService,
+    SafeWebhookHttpClient,
     InternalServiceTokenGuard,
   ],
 })

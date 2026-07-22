@@ -38,11 +38,13 @@ describe('DeliveryAttemptService idempotency', () => {
       createQueryBuilder: jest.fn(() => builder),
       findOneBy: jest.fn().mockResolvedValue(existing),
     } as unknown as Repository<DeliveryAttempt>;
-    const service = new DeliveryAttemptService(repository);
+    const service = new DeliveryAttemptService(repository, {} as never);
 
     await expect(service.upsertFromCommand(command)).resolves.toBe(existing);
     await expect(service.upsertFromCommand(command)).resolves.toBe(existing);
     expect(builder.orIgnore).toHaveBeenCalledTimes(2);
-    expect(repository.findOneBy).toHaveBeenCalledWith({ id: command.attemptId });
+    expect(repository.findOneBy).toHaveBeenCalledWith({
+      id: command.attemptId,
+    });
   });
 });

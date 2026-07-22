@@ -26,12 +26,20 @@ export class DeliveryProcessor extends WorkerHost {
         throw new Error('Unsupported or invalid delivery command version');
       }
       const attempt = await this.attempts.upsertFromCommand(job.data);
-      await this.attempts.deliver(attempt.id);
+      if (attempt.status === 'pending' && attempt.attemptNumber === 1) {
+        await this.attempts.deliver(attempt.id);
+      }
       return;
     }
 
     if (job.name === RETRY_WEBHOOK_JOB && this.isRetryJob(job.data)) {
-      await this.attempts.deliver(job.data.attemptId);
+      const claimed = await this.attempts.claimRetry(
+        job.data.attemptId,
+        job.data.attemptNumber,
+      );
+      if (claimed) {
+        await this.attempts.deliver(job.data.attemptId);
+      }
       return;
     }
 
@@ -42,7 +50,9 @@ export class DeliveryProcessor extends WorkerHost {
     return (
       !!value &&
       typeof value === 'object' &&
-      typeof (value as RetryWebhookJob).attemptId === 'string'
+      typeof (value as RetryWebhookJob).attemptId === 'string' &&
+      Number.isInteger((value as RetryWebhookJob).attemptNumber) &&
+      (value as RetryWebhookJob).attemptNumber > 1
     );
   }
 }
