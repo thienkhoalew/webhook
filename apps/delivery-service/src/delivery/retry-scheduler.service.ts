@@ -18,11 +18,15 @@ export class RetrySchedulerService {
     const due = await this.attempts.findDueRetries(100);
     for (const attempt of due) {
       try {
-        await this.attempts.prepareRetry(attempt.id);
-        await this.queue.enqueueRetry(attempt.id);
+        await this.queue.enqueueRetry(
+          attempt.id,
+          attempt.status === 'retrying'
+            ? attempt.attemptNumber + 1
+            : attempt.attemptNumber,
+        );
       } catch (error) {
-        this.logger.debug(
-          `Retry ${attempt.id} already claimed: ${error instanceof Error ? error.message : 'unknown error'}`,
+        this.logger.warn(
+          `Retry enqueue failed for attempt ${attempt.id}: ${error instanceof Error ? error.message : 'unknown error'}`,
         );
       }
     }

@@ -6,12 +6,16 @@ services:
       POSTGRES_USER: ${API_DB_USERNAME:-webhook_api_user}
       POSTGRES_PASSWORD: ${API_DB_PASSWORD:-webhook_api_password}
       POSTGRES_DB: ${API_DB_DATABASE:-webhook_api_db}
-    ports:
-      - "5432:5432"
     volumes:
       - webhook_api_data:/var/lib/postgresql/data
+    ports:
+      - '127.0.0.1:5432:5432'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${API_DB_USERNAME:-webhook_api_user} -d ${API_DB_DATABASE:-webhook_api_db}"]
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${API_DB_USERNAME:-webhook_api_user} -d ${API_DB_DATABASE:-webhook_api_db}',
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -23,12 +27,16 @@ services:
       POSTGRES_USER: ${DELIVERY_DB_USERNAME:-webhook_delivery_user}
       POSTGRES_PASSWORD: ${DELIVERY_DB_PASSWORD:-webhook_delivery_password}
       POSTGRES_DB: ${DELIVERY_DB_DATABASE:-webhook_delivery_db}
-    ports:
-      - "5433:5432"
     volumes:
       - webhook_delivery_data:/var/lib/postgresql/data
+    ports:
+      - '127.0.0.1:5433:5432'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DELIVERY_DB_USERNAME:-webhook_delivery_user} -d ${DELIVERY_DB_DATABASE:-webhook_delivery_db}"]
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${DELIVERY_DB_USERNAME:-webhook_delivery_user} -d ${DELIVERY_DB_DATABASE:-webhook_delivery_db}',
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -39,8 +47,10 @@ services:
     command: redis-server --appendonly yes
     volumes:
       - webhook_redis_data:/data
+    ports:
+      - '127.0.0.1:6379:6379'
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -63,7 +73,7 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-token-change-me}
       JWT_SECRET: ${JWT_SECRET:-local-jwt-secret-change-me}
     ports:
-      - "3000:3000"
+      - '127.0.0.1:3000:3000'
     depends_on:
       postgres-api:
         condition: service_healthy
@@ -88,14 +98,22 @@ services:
       REDIS_PORT: 6379
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-token-change-me}
     ports:
-      - "3001:3001"
+      - '127.0.0.1:3001:3001'
     depends_on:
       postgres-delivery:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      test:
+        [
+          'CMD',
+          'wget',
+          '--quiet',
+          '--tries=1',
+          '--spider',
+          'http://localhost:3001/health',
+        ]
       interval: 10s
       timeout: 3s
       retries: 10

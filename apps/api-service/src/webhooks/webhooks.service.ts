@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'node:crypto';
 import { ArrayContains, DataSource, Repository } from 'typeorm';
@@ -14,10 +18,10 @@ import { UserRole } from '../users/enums/user-role.enum.js';
 import { CreateWebhookDto } from './dto/create-webhook.dto.js';
 import { ListWebhookEventsDto } from './dto/list-webhook-events.dto.js';
 import { UpdateWebhookDto } from './dto/update-webhook.dto.js';
+import { WebhookDeliveryOutbox } from './entities/webhook-delivery-outbox.entity.js';
 import { WebhookEvent } from './entities/webhook-event.entity.js';
 import { WebhookSubscription } from './entities/webhook-subscription.entity.js';
 import { WebhookEventStatus } from './enums/webhook-status.enum.js';
-import { WebhookQueueService } from './queue/webhook-queue.service.js';
 
 const ATTEMPT_ID_NAMESPACE = '9bf635a4-b4e3-4a6b-a2a8-3a56d59975dd';
 
@@ -28,7 +32,6 @@ export class WebhooksService {
     private readonly subscriptionRepository: Repository<WebhookSubscription>,
     @InjectRepository(WebhookEvent)
     private readonly eventRepository: Repository<WebhookEvent>,
-    private readonly queue: WebhookQueueService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -119,11 +122,10 @@ export class WebhooksService {
     payload: Record<string, unknown>,
     user: AuthenticatedUser,
   ) {
-    // DB transaction and Redis enqueue cannot commit atomically. Deterministic
-    // attempt IDs make a client retry safe when enqueue fails after event save.
     const result = await this.dataSource.transaction(async (manager) => {
       const eventRepository = manager.getRepository(WebhookEvent);
       const subscriptionRepository = manager.getRepository(WebhookSubscription);
+      const outboxRepository = manager.getRepository(WebhookDeliveryOutbox);
       const subscriptions = await subscriptionRepository.find({
         where: {
           isActive: true,
@@ -136,6 +138,7 @@ export class WebhooksService {
           eventType,
           payload,
           userId: user.id,
+          expectedDeliveryCount: subscriptions.length,
           status:
             subscriptions.length === 0
               ? WebhookEventStatus.NoSubscribers
@@ -162,10 +165,20 @@ export class WebhooksService {
           secret: subscription.secret,
         },
       }));
+      if (commands.length > 0) {
+        await outboxRepository.save(
+          commands.map((command) =>
+            outboxRepository.create({
+              attemptId: command.attemptId,
+              eventId: event.id,
+              command: command as unknown as Record<string, unknown>,
+            }),
+          ),
+        );
+      }
       return { event, commands };
     });
 
-    await this.queue.enqueueMany(result.commands);
     return {
       event: result.event,
       deliveryAttempts: result.commands.map((command) => ({
@@ -176,6 +189,16 @@ export class WebhooksService {
         attemptNumber: 1,
       })),
     };
+  }
+
+  async markEventProcessing(eventId: string): Promise<void> {
+    await this.eventRepository
+      .createQueryBuilder()
+      .update(WebhookEvent)
+      .set({ status: WebhookEventStatus.Processing })
+      .where('id = :eventId', { eventId })
+      .andWhere('status = :status', { status: WebhookEventStatus.Failed })
+      .execute();
   }
 
   private sanitizeSubscription(subscription: WebhookSubscription) {

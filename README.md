@@ -16,7 +16,7 @@ Chỉ [contracts](libs/contracts/src/) được chia sẻ. Hai application khôn
 
 Delivery semantics: at-least-once. `attemptId` dùng làm idempotency key DB và header `X-Webhook-Attempt-Id`. Target có thể nhận request trùng nếu worker crash sau HTTP success nhưng trước DB commit.
 
-Event save và Redis enqueue chưa dùng transactional outbox. Nếu Redis lỗi sau DB commit, request tạo event trả lỗi; client retry tạo event mới. Production cần thêm API outbox publisher để đóng khoảng trống này.
+API lưu event và delivery command trong cùng transaction qua outbox. Publisher enqueue với deterministic `jobId`; Redis lỗi giữ row để thử lại. API đối chiếu delivery DB theo batch mỗi 30 giây để chuyển event từ `processing` sang `delivered` hoặc `failed`.
 
 ## Cấu trúc
 
@@ -27,6 +27,8 @@ libs/contracts
 ```
 
 ## Cài đặt
+
+Yêu cầu: Node.js 22, npm và Docker Compose.
 
 ### Chạy toàn bộ stack bằng Docker Compose
 
@@ -50,7 +52,7 @@ Lệnh trên xóa toàn bộ API DB, delivery DB và Redis data local. Không ch
 ### Chạy application trên host
 
 ```bash
-npm install
+npm ci
 cp .env.example .env
 docker compose up -d postgres-api postgres-delivery redis
 npm run migration:run
@@ -92,7 +94,7 @@ docker compose exec -T postgres-delivery \
   -c '\dt'
 ```
 
-API DB phải chỉ có bảng domain `users`, `webhook_events`, `webhook_subscriptions`. Delivery DB phải chỉ có bảng domain `webhook_delivery_attempts`. Mỗi DB có thêm bảng metadata `migrations`.
+API DB phải chỉ có bảng domain `users`, `webhook_events`, `webhook_subscriptions`, `webhook_delivery_outbox`. Delivery DB phải chỉ có bảng domain `webhook_delivery_attempts`. Mỗi DB có thêm bảng metadata `migrations`.
 
 ## Build và test
 
@@ -114,7 +116,7 @@ docker compose ps
 docker compose logs --no-color api-service delivery-service
 ```
 
-Production phải đặt secret mạnh, bật Redis auth/TLS, bỏ publish port `3001` ra host và chỉ cho API service truy cập delivery service qua private network.
+Compose development chỉ bind host ports vào `127.0.0.1`. Production phải đặt secret mạnh, bật Redis auth/TLS, bỏ host bindings của database, Redis và delivery service, rồi chỉ cho API truy cập delivery qua private network. Outbound webhook chỉ cho HTTP/HTTPS public targets; private/special IP và redirects bị từ chối để chặn SSRF.
 
 ## Migrations
 
@@ -125,7 +127,7 @@ npm run migration:show:api
 npm run migration:show:delivery
 ```
 
-API DB chứa `users`, `webhook_subscriptions`, `webhook_events`. Delivery DB chỉ chứa `webhook_delivery_attempts`; IDs API là external references, không có foreign key cross-database.
+API DB chứa `users`, `webhook_subscriptions`, `webhook_events`, `webhook_delivery_outbox`. Delivery DB chỉ chứa `webhook_delivery_attempts`; IDs API là external references, không có foreign key cross-database.
 
 ## Di chuyển dữ liệu development cũ
 

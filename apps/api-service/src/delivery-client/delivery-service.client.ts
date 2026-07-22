@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import type {
   DeliveryAttemptQuery,
   DeliveryAttemptResponse,
+  DeliveryEventSummaryResponse,
   PaginatedDeliveryAttemptsResponse,
 } from '@webhook/contracts';
 
@@ -48,6 +49,19 @@ export class DeliveryServiceClient {
     );
   }
 
+  async summarizeEvents(
+    eventIds: string[],
+  ): Promise<DeliveryEventSummaryResponse> {
+    return this.request<DeliveryEventSummaryResponse>(
+      '/internal/delivery-attempts/summaries',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventIds }),
+      },
+    );
+  }
+
   private async request<T>(path: string, init: RequestInit): Promise<T> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -63,9 +77,10 @@ export class DeliveryServiceClient {
         },
       });
 
-      const body = (await response.json().catch(() => null)) as
-        | Record<string, unknown>
-        | null;
+      const body = (await response.json().catch(() => null)) as Record<
+        string,
+        unknown
+      > | null;
       if (!response.ok) {
         throw new BadGatewayException({
           message: 'Delivery service request failed',

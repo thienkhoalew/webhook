@@ -7,6 +7,7 @@
     "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": "tsconfig.json" }]
   },
   "moduleNameMapper": {
+    "^(\\.{1,2}/.*)\\.js$": "$1",
     "^@webhook/contracts$": "<rootDir>/libs/contracts/src/index.ts",
     "^@webhook/contracts/(.*)$": "<rootDir>/libs/contracts/src/$1"
   }

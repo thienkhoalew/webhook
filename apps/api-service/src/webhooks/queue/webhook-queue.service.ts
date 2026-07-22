@@ -18,6 +18,8 @@ export class WebhookQueueService {
   enqueue(command: DeliverWebhookV1) {
     return this.deliveryQueue.add(DELIVER_WEBHOOK_JOB, command, {
       jobId: command.attemptId,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 1000 },
       removeOnComplete: true,
       removeOnFail: true,
     });
